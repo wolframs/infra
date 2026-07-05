@@ -23,6 +23,7 @@ import {
 import { hasStarredMessage, recordBountyStar } from '../services/bounty.js'
 import { getOrCreateUser, extractDiscordUserInfo } from '../services/user.js'
 import { getBalance, deductBalanceSimple } from '../services/balance.js'
+import type { MessageGroup } from '../services/tracking.js'
 import { logger } from '../utils/logger.js'
 
 const STAR = '⭐'
@@ -75,11 +76,44 @@ async function updateCount(
  * Post or update the starboard entry for `message` given its new star count.
  * No-op if the server has no starboard channel or the count is below threshold.
  */
-export async function syncStarboard(
+/** Fetch every chunk of a group and stitch them into one author/content/jump. */
+async function assembleGroup(
+  client: Client,
+  group: MessageGroup
+): Promise<{ authorName: string; authorIcon: string | null; content: string; jumpUrl: string } | null> {
+  try {
+    const channel = (await client.channels.fetch(group.channelId)) as TextChannel | null
+    if (!channel) return null
+    const parts: string[] = []
+    let root: any = null
+    for (const id of group.memberIds) {
+      const m = await channel.messages.fetch(id).catch(() => null)
+      if (m) {
+        if (!root) root = m
+        if (m.content) parts.push(m.content)
+      }
+    }
+    if (!root) return null
+    return {
+      authorName: root.author?.username ?? 'unknown',
+      authorIcon: root.author?.displayAvatarURL?.() ?? null,
+      content: parts.join('\n'),
+      jumpUrl: `https://discord.com/channels/${root.guildId}/${root.channelId}/${root.id}`,
+    }
+  } catch {
+    return null
+  }
+}
+
+/**
+ * Post or update the single starboard entry for a message GROUP (all chunks of
+ * one response), keyed by the group's root id. No-op below threshold.
+ */
+export async function syncStarboardGroup(
   client: Client,
   db: Database,
   serverConfig: Partial<ServerConfig>,
-  message: any,
+  group: MessageGroup,
   serverId: string | null,
   starCount: number
 ): Promise<void> {
@@ -87,7 +121,7 @@ export async function syncStarboard(
   if (!channelId) return
 
   const threshold = serverConfig.starboardThreshold ?? 1
-  const existing = getStarboardEntryByOriginal(db, message.id)
+  const existing = getStarboardEntryByOriginal(db, group.rootId)
 
   // Below threshold and not yet posted → nothing to show.
   if (starCount < threshold && !existing) return
@@ -97,28 +131,25 @@ export async function syncStarboard(
     return
   }
 
-  // First time crossing the threshold — post a fresh entry.
+  // First time crossing the threshold — assemble the whole message and post.
   try {
     const channel = (await client.channels.fetch(channelId)) as TextChannel | null
     if (!channel) {
       logger.warn({ channelId }, 'Starboard: channel not found / not a text channel')
       return
     }
-    const jumpUrl = `https://discord.com/channels/${message.guildId}/${message.channelId}/${message.id}`
-    const embed = buildEmbed({
-      authorName: message.author?.username ?? 'unknown',
-      authorIcon: message.author?.displayAvatarURL?.() ?? null,
-      content: message.content ?? '',
-      jumpUrl,
-      starCount,
-    })
+    const assembled = await assembleGroup(client, group)
+    if (!assembled) {
+      logger.warn({ rootId: group.rootId }, 'Starboard: could not assemble group content')
+      return
+    }
+    const embed = buildEmbed({ ...assembled, starCount })
     const posted = await channel.send({ embeds: [embed] })
-    createStarboardEntry(db, message.id, posted.id, serverId, message.channelId ?? null)
-    // Seed a star reaction so members can one-click boost from the starboard.
+    createStarboardEntry(db, group.rootId, posted.id, serverId, group.channelId)
     try { await posted.react(STAR) } catch { /* non-fatal */ }
-    logger.info({ originalMessageId: message.id, starboardMessageId: posted.id, starCount }, 'Starboard: posted entry')
+    logger.info({ rootId: group.rootId, parts: group.memberIds.length, starboardMessageId: posted.id, starCount }, 'Starboard: posted entry')
   } catch (error) {
-    logger.error({ error, messageId: message.id }, 'Starboard: failed to post entry')
+    logger.error({ error, rootId: group.rootId }, 'Starboard: failed to post entry')
   }
 }
 

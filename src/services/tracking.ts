@@ -112,6 +112,45 @@ export function getTrackedMessage(
 }
 
 /**
+ * A logical bot response may be split across several Discord messages (2k-char
+ * chunking). All chunks of one response are tracked with the SAME
+ * trigger_message_id + bot_discord_id, so we can group them. The "root" is the
+ * earliest chunk (smallest snowflake) and is used as the canonical id for star
+ * counting / the single starboard entry.
+ */
+export interface MessageGroup {
+  rootId: string
+  memberIds: string[]        // all chunk message ids, in send order
+  channelId: string
+  serverId: string | null
+  triggerUserDiscordId: string
+}
+
+export function getMessageGroup(db: Database, messageId: string): MessageGroup | null {
+  const t = getTrackedMessage(db, messageId)
+  if (!t) return null
+
+  let memberIds: string[] = [messageId]
+  if (t.triggerMessageId) {
+    const rows = db.prepare(`
+      SELECT message_id FROM tracked_messages
+      WHERE trigger_message_id = ? AND bot_discord_id = ?
+      ORDER BY CAST(message_id AS INTEGER) ASC
+    `).all(t.triggerMessageId, t.botDiscordId) as Array<{ message_id: string }>
+    if (rows.length > 0) memberIds = rows.map(r => r.message_id)
+  }
+  if (!memberIds.includes(messageId)) memberIds.push(messageId)
+
+  return {
+    rootId: memberIds[0]!,
+    memberIds,
+    channelId: t.channelId,
+    serverId: t.serverId,
+    triggerUserDiscordId: t.triggerUserDiscordId,
+  }
+}
+
+/**
  * Get a tracked message by trigger message ID (user's original message that triggered the bot)
  * Returns null if not found or expired
  */

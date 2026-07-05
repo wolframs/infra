@@ -12,13 +12,13 @@ import {
   type Client,
 } from 'discord.js'
 import type { Database } from 'better-sqlite3'
-import { getTrackedMessage, getTrackedMessageByTrigger } from '../../services/tracking.js'
+import { getTrackedMessage, getTrackedMessageByTrigger, getMessageGroup } from '../../services/tracking.js'
 import { addBalance, transferBalance, getBalance, deductBalanceSimple } from '../../services/balance.js'
 import { getOrCreateUser, getServerById, extractDiscordUserInfo } from '../../services/user.js'
 import { hasClaimedReward, recordRewardClaim } from '../../services/rewards.js'
 import { hasStarredMessage, recordBountyStar, removeBountyStar, getMessageBounty, getNewlyUnlockedTiers, markTiersClaimed } from '../../services/bounty.js'
 import { getStarboardEntryByPost } from '../../services/starboard.js'
-import { syncStarboard, handleStarboardStar, removeOrUpdateStarboard } from '../starboard.js'
+import { syncStarboardGroup, handleStarboardStar, removeOrUpdateStarboard } from '../starboard.js'
 import { isDmOptedIn } from '../../services/preferences.js'
 import { notifyTipReceived, notifyBountyEarned } from '../../services/notifications.js'
 import { createTipReceivedEmbed, createBountyEarnedEmbed } from '../embeds/builders.js'
@@ -373,10 +373,13 @@ export async function handleReactionRemove(
   const serverConfig = server?.config
   if (emoji !== (serverConfig?.bountyEmoji || DEFAULT_BOUNTY_EMOJI)) return
 
+  // Count against the group's root (chunked responses map to one entry).
+  const group = getMessageGroup(db, messageId)
+  const rootId = group?.rootId ?? messageId
   const reactorUser = getOrCreateUser(db, (user as User).id, extractDiscordUserInfo(user as User))
-  const newCount = removeBountyStar(db, reactorUser.id, messageId)
+  const newCount = removeBountyStar(db, reactorUser.id, rootId)
   if (newCount !== null) {
-    await removeOrUpdateStarboard(client, db, serverConfig || {}, messageId, newCount)
+    await removeOrUpdateStarboard(client, db, serverConfig || {}, rootId, newCount)
   }
 }
 
@@ -520,7 +523,11 @@ async function processBounty(
 ): Promise<void> {
   // Get reactor's internal user ID and cache their profile
   const reactorUser = getOrCreateUser(db, reactor.id, extractDiscordUserInfo(reactor))
-  const messageId = message.id
+
+  // A long response is split across several Discord messages; count stars
+  // against the group's root so any chunk maps to one starboard entry.
+  const group = getMessageGroup(db, message.id)
+  const messageId = group?.rootId ?? message.id
 
   // Check if user has already starred this message
   if (hasStarredMessage(db, reactorUser.id, messageId)) {
@@ -561,7 +568,7 @@ async function processBounty(
     }, 'Bounty star recorded')
 
     // Showcase on the starboard (posts a new entry or bumps the count).
-    await syncStarboard(client, db, serverConfig, message, serverId, newStarCount)
+    if (group) await syncStarboardGroup(client, db, serverConfig, group, serverId, newStarCount)
 
     // Check if any tier thresholds are crossed
     const currentBounty = getMessageBounty(db, messageId)
