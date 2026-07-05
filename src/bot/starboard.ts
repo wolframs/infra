@@ -22,7 +22,6 @@ import {
 import { hasStarredMessage, recordBountyStar } from '../services/bounty.js'
 import { getOrCreateUser, extractDiscordUserInfo } from '../services/user.js'
 import { getBalance, deductBalanceSimple } from '../services/balance.js'
-import { getTrackedMessage } from '../services/tracking.js'
 import { logger } from '../utils/logger.js'
 
 const STAR = '⭐'
@@ -136,10 +135,6 @@ export async function handleStarboardStar(
 ): Promise<void> {
   const originalId = entry.originalMessageId
   const reactorUser = getOrCreateUser(db, reactor.id, extractDiscordUserInfo(reactor))
-
-  // Can't boost your own elicited message (mirrors the origin-channel guard).
-  const tracked = getTrackedMessage(db, originalId)
-  if (tracked && reactor.id === tracked.triggerUserDiscordId) return
 
   // Per-user dedup: one star per (user, original message), wherever they clicked.
   if (hasStarredMessage(db, reactorUser.id, originalId)) return

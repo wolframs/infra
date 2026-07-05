@@ -242,9 +242,6 @@ export async function handleReactionAdd(
   
   if (!tracked) return
 
-  // Can't reward yourself
-  if (user.id === tracked.triggerUserDiscordId) return
-
   // Get server config (tracked.serverId is the internal UUID, not Discord ID)
   const server = tracked.serverId
     ? getServerById(db, tracked.serverId)
@@ -291,6 +288,11 @@ export async function handleReactionAdd(
     )
     return
   }
+
+  // Reward and tip flow ichor to the trigger user, so the trigger user can't
+  // claim them on their own elicited message. (Stars are a rating/showcase, not
+  // a self-reward — handled above — so the summoner MAY star to nominate.)
+  if (user.id === tracked.triggerUserDiscordId) return
 
   // Check for tip
   if (emoji === serverConfig.tipEmoji) {
