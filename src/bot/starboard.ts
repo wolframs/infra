@@ -17,6 +17,7 @@ import type { ServerConfig } from '../types/index.js'
 import {
   getStarboardEntryByOriginal,
   createStarboardEntry,
+  deleteStarboardEntry,
   type StarboardEntry,
 } from '../services/starboard.js'
 import { hasStarredMessage, recordBountyStar } from '../services/bounty.js'
@@ -119,6 +120,42 @@ export async function syncStarboard(
   } catch (error) {
     logger.error({ error, messageId: message.id }, 'Starboard: failed to post entry')
   }
+}
+
+/**
+ * A star was removed from a message (or its starboard entry) — reflect the new
+ * count on the entry, or delete the entry entirely if it fell below threshold.
+ */
+export async function removeOrUpdateStarboard(
+  client: Client,
+  db: Database,
+  serverConfig: Partial<ServerConfig>,
+  originalMessageId: string,
+  newCount: number
+): Promise<void> {
+  const channelId = serverConfig.starboardChannelId
+  if (!channelId) return
+  const entry = getStarboardEntryByOriginal(db, originalMessageId)
+  if (!entry) return
+
+  const threshold = serverConfig.starboardThreshold ?? 1
+  if (newCount >= threshold && newCount > 0) {
+    await updateCount(client, channelId, entry.starboardMessageId, newCount)
+    return
+  }
+
+  // Fell below threshold → remove the showcase entry.
+  try {
+    const channel = (await client.channels.fetch(channelId)) as TextChannel | null
+    if (channel) {
+      const msg = await channel.messages.fetch(entry.starboardMessageId).catch(() => null)
+      if (msg) await msg.delete().catch(() => {})
+    }
+  } catch (error) {
+    logger.warn({ error, starboardMessageId: entry.starboardMessageId }, 'Starboard: failed to delete entry')
+  }
+  deleteStarboardEntry(db, originalMessageId)
+  logger.info({ originalMessageId, newCount }, 'Starboard: removed entry (below threshold)')
 }
 
 /**

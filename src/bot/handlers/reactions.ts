@@ -16,9 +16,9 @@ import { getTrackedMessage, getTrackedMessageByTrigger } from '../../services/tr
 import { addBalance, transferBalance, getBalance, deductBalanceSimple } from '../../services/balance.js'
 import { getOrCreateUser, getServerById, extractDiscordUserInfo } from '../../services/user.js'
 import { hasClaimedReward, recordRewardClaim } from '../../services/rewards.js'
-import { hasStarredMessage, recordBountyStar, getMessageBounty, getNewlyUnlockedTiers, markTiersClaimed } from '../../services/bounty.js'
+import { hasStarredMessage, recordBountyStar, removeBountyStar, getMessageBounty, getNewlyUnlockedTiers, markTiersClaimed } from '../../services/bounty.js'
 import { getStarboardEntryByPost } from '../../services/starboard.js'
-import { syncStarboard, handleStarboardStar } from '../starboard.js'
+import { syncStarboard, handleStarboardStar, removeOrUpdateStarboard } from '../starboard.js'
 import { isDmOptedIn } from '../../services/preferences.js'
 import { notifyTipReceived, notifyBountyEarned } from '../../services/notifications.js'
 import { createTipReceivedEmbed, createBountyEarnedEmbed } from '../embeds/builders.js'
@@ -320,6 +320,63 @@ export async function handleReactionAdd(
       emoji,
       tracked.messageId  // Always use canonical bot response ID for claim tracking
     )
+  }
+}
+
+/**
+ * Handle a removed reaction. Only stars are reversible (they're a live count);
+ * reward/tip are minting/transfers and are not undone on un-react. Removing a
+ * star decrements the message's count and updates — or deletes — its starboard
+ * entry when it drops below threshold.
+ */
+export async function handleReactionRemove(
+  reaction: MessageReaction | PartialMessageReaction,
+  user: User | PartialUser,
+  db: Database,
+  client: Client
+): Promise<void> {
+  if (user.bot) return
+
+  try {
+    if (reaction.partial) await reaction.fetch()
+    if (user.partial) await user.fetch()
+  } catch (error) {
+    logger.error({ error }, 'Failed to fetch reaction/user partials (remove)')
+    return
+  }
+
+  const messageId = reaction.message.id
+  const emoji = reaction.emoji.name
+  if (!emoji) return
+
+  // Un-star on a starboard entry → drop the reactor's star from the original.
+  const starEntry = getStarboardEntryByPost(db, messageId)
+  if (starEntry) {
+    const sbServer = starEntry.serverId ? getServerById(db, starEntry.serverId) : null
+    const sbConfig = sbServer?.config
+    if (emoji === (sbConfig?.bountyEmoji || DEFAULT_BOUNTY_EMOJI)) {
+      const reactorUser = getOrCreateUser(db, (user as User).id, extractDiscordUserInfo(user as User))
+      const newCount = removeBountyStar(db, reactorUser.id, starEntry.originalMessageId)
+      if (newCount !== null) {
+        await removeOrUpdateStarboard(client, db, sbConfig || {}, starEntry.originalMessageId, newCount)
+      }
+    }
+    return
+  }
+
+  // Un-star on a tracked (original) message.
+  let tracked = getTrackedMessage(db, messageId)
+  if (!tracked) tracked = getTrackedMessageByTrigger(db, messageId)
+  if (!tracked) return
+
+  const server = tracked.serverId ? getServerById(db, tracked.serverId) : null
+  const serverConfig = server?.config
+  if (emoji !== (serverConfig?.bountyEmoji || DEFAULT_BOUNTY_EMOJI)) return
+
+  const reactorUser = getOrCreateUser(db, (user as User).id, extractDiscordUserInfo(user as User))
+  const newCount = removeBountyStar(db, reactorUser.id, messageId)
+  if (newCount !== null) {
+    await removeOrUpdateStarboard(client, db, serverConfig || {}, messageId, newCount)
   }
 }
 

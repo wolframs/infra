@@ -57,6 +57,32 @@ export function recordBountyStar(
 }
 
 /**
+ * Remove a user's star from a message and decrement the count.
+ * Returns the new star count, or null if the user had not starred it.
+ */
+export function removeBountyStar(
+  db: Database,
+  userId: string,
+  messageId: string
+): number | null {
+  const del = db.prepare(`
+    DELETE FROM bounty_stars WHERE user_id = ? AND message_id = ?
+  `).run(userId, messageId)
+
+  if (del.changes === 0) return null
+
+  db.prepare(`
+    UPDATE message_bounties SET star_count = MAX(0, star_count - 1) WHERE message_id = ?
+  `).run(messageId)
+
+  const row = db.prepare(`
+    SELECT star_count FROM message_bounties WHERE message_id = ?
+  `).get(messageId) as { star_count: number } | undefined
+
+  return row ? row.star_count : 0
+}
+
+/**
  * Get current bounty status for a message
  */
 export function getMessageBounty(

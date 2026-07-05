@@ -51,6 +51,11 @@ export function getStarboardEntryByPost(db: Database, starboardMessageId: string
   return row ? toEntry(row) : null
 }
 
+/** Remove the mapping (called when an entry drops below threshold and is deleted). */
+export function deleteStarboardEntry(db: Database, originalMessageId: string): void {
+  db.prepare(`DELETE FROM starboard_entries WHERE original_message_id = ?`).run(originalMessageId)
+}
+
 /** Record the mapping after posting a new starboard entry. */
 export function createStarboardEntry(
   db: Database,

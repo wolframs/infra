@@ -12,7 +12,7 @@ import { Client, GatewayIntentBits, Partials, Events, ActivityType } from 'disco
 import type { Database } from 'better-sqlite3'
 import type { InfraEventBus } from '../types/events.js'
 import { registerCommands, handleInteraction } from './commands/index.js'
-import { handleReactionAdd } from './handlers/reactions.js'
+import { handleReactionAdd, handleReactionRemove } from './handlers/reactions.js'
 import { setupNotificationHandlers } from './handlers/notifications.js'
 import { logAdminConfig } from '../services/roles.js'
 import { logger } from '../utils/logger.js'
@@ -169,6 +169,14 @@ export class InfraBot {
         await handleReactionAdd(reaction, user, this.db, this.client)
       } catch (error) {
         logger.error({ error }, 'Error handling reaction')
+      }
+    })
+
+    this.client.on(Events.MessageReactionRemove, async (reaction, user) => {
+      try {
+        await handleReactionRemove(reaction, user, this.db, this.client)
+      } catch (error) {
+        logger.error({ error }, 'Error handling reaction removal')
       }
     })
 
