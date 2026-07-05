@@ -17,6 +17,8 @@ import { addBalance, transferBalance, getBalance, deductBalanceSimple } from '..
 import { getOrCreateUser, getServerById, extractDiscordUserInfo } from '../../services/user.js'
 import { hasClaimedReward, recordRewardClaim } from '../../services/rewards.js'
 import { hasStarredMessage, recordBountyStar, getMessageBounty, getNewlyUnlockedTiers, markTiersClaimed } from '../../services/bounty.js'
+import { getStarboardEntryByPost } from '../../services/starboard.js'
+import { syncStarboard, handleStarboardStar } from '../starboard.js'
 import { isDmOptedIn } from '../../services/preferences.js'
 import { notifyTipReceived, notifyBountyEarned } from '../../services/notifications.js'
 import { createTipReceivedEmbed, createBountyEarnedEmbed } from '../embeds/builders.js'
@@ -210,6 +212,25 @@ export async function handleReactionAdd(
 
   if (!emoji) return
 
+  // Starboard entries are not tracked messages of their own; intercept a star
+  // ON an entry and route it back to the original message's count (deduped).
+  const starEntry = getStarboardEntryByPost(db, messageId)
+  if (starEntry) {
+    const sbServer = starEntry.serverId ? getServerById(db, starEntry.serverId) : null
+    const sbConfig = sbServer?.config
+    const sbBountyEmoji = sbConfig?.bountyEmoji || DEFAULT_BOUNTY_EMOJI
+    if (emoji === sbBountyEmoji) {
+      await handleStarboardStar(
+        db,
+        starEntry,
+        reaction,
+        user as User,
+        sbConfig?.bountyStarCost ?? DEFAULT_BOUNTY_STAR_COST
+      )
+    }
+    return
+  }
+
   // Check if this is a tracked bot message OR a trigger message
   // First try looking up by bot response message ID
   let tracked = getTrackedMessage(db, messageId)
@@ -265,7 +286,8 @@ export async function handleReactionAdd(
       tracked.serverId,
       bountyStarCost,
       bountyTiers,
-      reaction.message
+      reaction.message,
+      serverConfig
     )
     return
   }
@@ -434,7 +456,8 @@ async function processBounty(
   serverId: string | null,
   starCost: number,
   tiers: { threshold: number; reward: number }[],
-  message: any
+  message: any,
+  serverConfig: any
 ): Promise<void> {
   // Get reactor's internal user ID and cache their profile
   const reactorUser = getOrCreateUser(db, reactor.id, extractDiscordUserInfo(reactor))
@@ -477,6 +500,9 @@ async function processBounty(
       starCost,
       newStarCount,
     }, 'Bounty star recorded')
+
+    // Showcase on the starboard (posts a new entry or bumps the count).
+    await syncStarboard(client, db, serverConfig, message, serverId, newStarCount)
 
     // Check if any tier thresholds are crossed
     const currentBounty = getMessageBounty(db, messageId)

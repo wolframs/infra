@@ -45,6 +45,9 @@ export interface ServerConfig {
   bountyEmoji?: string       // Single emoji for paid bounty stars (default: '⭐')
   bountyStarCost?: number    // Ichor cost per star reaction (default: 50)
   bountyTiers?: BountyTier[] // Tier thresholds and rewards (default: [{4, 500}, {7, 1500}])
+  // Starboard
+  starboardChannelId?: string  // Channel where starred messages are showcased (unset = disabled)
+  starboardThreshold?: number  // Min star count for a message to appear on the starboard (default: 1)
   lastModifiedBy?: string    // Discord user ID who last modified config
   lastModifiedAt?: string    // ISO timestamp of last modification
 }

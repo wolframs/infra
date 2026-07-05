@@ -316,6 +316,22 @@ const MIGRATIONS: Migration[] = [
       db.exec(`CREATE INDEX IF NOT EXISTS idx_role_configs_priority ON role_configs(server_id, priority)`)
     }
   },
+  {
+    id: '015_add_starboard_entries',
+    description: 'Add starboard_entries table mapping starred messages to their starboard posts',
+    up: (db) => {
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS starboard_entries (
+          original_message_id TEXT PRIMARY KEY,
+          starboard_message_id TEXT NOT NULL,
+          server_id TEXT,
+          channel_id TEXT,
+          created_at TEXT DEFAULT (datetime('now'))
+        )
+      `)
+      db.exec(`CREATE INDEX IF NOT EXISTS idx_starboard_by_post ON starboard_entries(starboard_message_id)`)
+    }
+  },
 ]
 
 /**

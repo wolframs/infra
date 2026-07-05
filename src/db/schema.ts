@@ -169,6 +169,18 @@ CREATE TABLE IF NOT EXISTS bounty_stars (
   PRIMARY KEY (user_id, message_id)
 );
 
+-- Starboard: maps a starred (original) message to its posted entry in the
+-- starboard channel, so the entry can be updated and re-stars on the entry can
+-- be routed back to the original message's star count.
+CREATE TABLE IF NOT EXISTS starboard_entries (
+  original_message_id TEXT PRIMARY KEY,
+  starboard_message_id TEXT NOT NULL,
+  server_id TEXT,
+  channel_id TEXT,
+  created_at TEXT DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_starboard_by_post ON starboard_entries(starboard_message_id);
+
 -- Cost overrides (temporary sales/discounts)
 CREATE TABLE IF NOT EXISTS cost_overrides (
   id TEXT PRIMARY KEY,
